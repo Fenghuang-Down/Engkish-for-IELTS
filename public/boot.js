@@ -68,20 +68,30 @@
 
   // ---- screens ----
   function loginScreen(msg){
-    show(`<h1>IELTS Academic</h1><p class="note">Курс подготовки на 6.5+: план на 28 недель, грамматика, слова, Reading, Writing, Speaking и пробники. Войди по почте, и прогресс будет на всех твоих устройствах.</p>
+    show(`<h1>IELTS Academic</h1><p class="note">Курс подготовки на 6.5+: план на 28 недель, грамматика, слова, Reading, Writing, Speaking и пробники. Прогресс сохраняется в аккаунте и виден на всех твоих устройствах.</p>
       <label class="note" for="g-email">Почта</label><input type="email" id="g-email" autocomplete="email" placeholder="you@example.com">
-      <button class="btn" id="g-send" type="button" style="margin-top:10px;width:100%">Получить код</button>
-      <div id="g-code-box" hidden style="margin-top:14px"><label class="note" for="g-code">Код из письма</label><input type="text" id="g-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
-      <button class="btn" id="g-verify" type="button" style="margin-top:10px;width:100%">Войти</button></div>
+      <label class="note" for="g-pass" style="margin-top:10px;display:block">Пароль (не меньше 6 символов)</label><input type="password" id="g-pass" autocomplete="current-password">
+      <button class="btn" id="g-in" type="button" style="margin-top:12px;width:100%">Войти</button>
+      <button class="btn ghost" id="g-up" type="button" style="margin-top:8px;width:100%">Создать аккаунт</button>
+      <button class="chip" id="g-forgot" type="button" style="margin-top:12px">Забыл пароль</button>
       <p class="sync" id="g-st">${esc(msg||"")}</p>`);
-    const st=document.getElementById("g-st");
-    document.getElementById("g-send").onclick = async ()=>{ const email=document.getElementById("g-email").value.trim(); if(!/^\S+@\S+\.\S+$/.test(email)){ st.textContent="Проверь адрес почты."; return; }
-      st.textContent="Отправляю…"; const { error } = await sb.auth.signInWithOtp({ email, options:{ emailRedirectTo: location.origin } });
-      if(error){ st.textContent="Не получилось: "+error.message; return; }
-      document.getElementById("g-code-box").hidden=false; st.textContent="Письмо отправлено. Введи код из письма или просто нажми ссылку в нём."; document.getElementById("g-code").focus(); };
-    document.getElementById("g-verify").onclick = async ()=>{ const email=document.getElementById("g-email").value.trim(), token=document.getElementById("g-code").value.trim();
-      st.textContent="Проверяю…"; const { data, error } = await sb.auth.verifyOtp({ email, token, type:"email" });
-      if(error){ st.textContent="Код не подошёл: "+error.message; return; } user=data.user; afterLogin(); };
+    const st=document.getElementById("g-st"), em=()=>document.getElementById("g-email").value.trim(), pw=()=>document.getElementById("g-pass").value;
+    const ok=()=>{ if(!/^\S+@\S+\.\S+$/.test(em())){ st.textContent="Проверь адрес почты."; return false; } if(pw().length<6){ st.textContent="Пароль должен быть не короче 6 символов."; return false; } return true; };
+    const RU={"Invalid login credentials":"Неверная почта или пароль.","User already registered":"Такой аккаунт уже есть, нажми «Войти».","Email not confirmed":"Почта не подтверждена: проверь письмо от Supabase."};
+    const errText=e=>RU[e.message]||e.message;
+    document.getElementById("g-in").onclick=async()=>{ if(!ok()) return; st.textContent="Вхожу…";
+      const { data, error } = await sb.auth.signInWithPassword({ email:em(), password:pw() }); if(error){ st.textContent=errText(error); return; } user=data.user; afterLogin(); };
+    document.getElementById("g-up").onclick=async()=>{ if(!ok()) return; st.textContent="Создаю аккаунт…";
+      const { data, error } = await sb.auth.signUp({ email:em(), password:pw() }); if(error){ st.textContent=errText(error); return; }
+      if(data.session){ user=data.user; afterLogin(); } else st.textContent="Аккаунт создан. Подтверди почту по ссылке из письма и нажми «Войти»."; };
+    document.getElementById("g-forgot").onclick=async()=>{ if(!/^\S+@\S+\.\S+$/.test(em())){ st.textContent="Впиши почту, и я пришлю ссылку для нового пароля."; return; }
+      const { error } = await sb.auth.resetPasswordForEmail(em(), { redirectTo: location.origin }); st.textContent = error? errText(error) : "Письмо со ссылкой отправлено. Открой его на этом устройстве."; };
+  }
+  function newPasswordScreen(){
+    show(`<h1>Новый пароль</h1><label class="note" for="g-np">Придумай новый пароль</label><input type="password" id="g-np" autocomplete="new-password">
+      <button class="btn" id="g-npb" type="button" style="margin-top:12px;width:100%">Сохранить</button><p class="sync" id="g-st"></p>`);
+    document.getElementById("g-npb").onclick=async()=>{ const v=document.getElementById("g-np").value; const st=document.getElementById("g-st"); if(v.length<6){ st.textContent="Не короче 6 символов."; return; }
+      const { error } = await sb.auth.updateUser({ password:v }); if(error){ st.textContent=error.message; return; } location.replace(location.origin); };
   }
 
   function profileScreen(db, prof){
@@ -156,10 +166,12 @@
     try{ cfg = await (await fetch("/api/config")).json(); }catch(e){ cfg=null; }
     if(!cfg || !cfg.supabaseUrl){ show(`<h1>Почти готово</h1><p>Сервер ещё не настроен: в Vercel не заданы SUPABASE_URL и SUPABASE_ANON_KEY. Инструкция в README.md.</p>`); return; }
     sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true } });
+    let recovering=/type=recovery/.test(location.hash);
+    sb.auth.onAuthStateChange((ev, s)=>{ if(ev==="PASSWORD_RECOVERY"){ recovering=true; newPasswordScreen(); } else if(ev==="SIGNED_IN" && s && !user && !recovering){ user=s.user; afterLogin(); } });
     const { data:{ session } } = await sb.auth.getSession();
+    if(recovering){ newPasswordScreen(); return; }
     if(session && session.user){ user=session.user; afterLogin(); return; }
     loginScreen();
-    sb.auth.onAuthStateChange((ev, s)=>{ if(ev==="SIGNED_IN" && s && !user){ user=s.user; afterLogin(); } });
   }
   if("serviceWorker" in navigator) window.addEventListener("load", ()=>navigator.serviceWorker.register("/sw.js").catch(()=>{}));
   start();

@@ -29,7 +29,7 @@ async function userFromToken(token) {
 async function bump(uid) {
   const r = await fetch(`${SB_URL}/rest/v1/rpc/ai_bump`, {
     method: "POST",
-    headers: { apikey: SB_SERVICE, Authorization: `Bearer ${SB_SERVICE}`, "Content-Type": "application/json" },
+    headers: { apikey: SB_SERVICE, ...(String(SB_SERVICE).startsWith("sb_") ? {} : { Authorization: `Bearer ${SB_SERVICE}` }), "Content-Type": "application/json" },
     body: JSON.stringify({ uid }),
   });
   if (!r.ok) throw new Error("usage counter failed: " + r.status);
